@@ -106,7 +106,11 @@
             x: 50, 
             y: gameState.GROUND_Y - 128, // start above ground 
             w: 128, 
-            h: 128, 
+            h: 128,
+            cw: 0,   // collision width
+            ch: 0,   // collision height
+            cxOff: 0, // x offset to center hitbox
+            cyOff: 0, // y offset to raise hitbox
             dy: 0, 
             speed: 5,
             isRunning: false, 
@@ -115,7 +119,11 @@
             frame: 0,
             frameTimer: 0,
             frameInterval: 10,
-            currentAnim: "idle"
+            currentAnim: "idle",
+            debugW: 0,
+            debugH: 0,
+            debugX: 0,
+            debugY: 0
         };
 
         // Key state tracker
@@ -177,31 +185,86 @@
             }
 
             let anim = animations[player.currentAnim];
+            if (!anim.img.complete) return; // Wait for image to load
             // Frame stepping
             player.frameTimer++;
             if (player.frameTimer > player.frameInterval) {
-                player.frame = (player.frame + 1) % anim.frames;
+                player.frame = (player.frame + 1) % anim.frames; // Loop animation
                 player.frameTimer = 0;
             }
         }
 
+        // Draw ground tiles
         function drawGround() {
             for (let x = 0; x < canvas.width; x += TILE_WIDTH) {
                 ctx.drawImage(groundTile, x, gameState.GROUND_Y, TILE_WIDTH, TILE_HEIGHT);
             }
         }
 
+        // Define relative size of hitbox (percent of sprite)
+        const hitboxWidthRatio = 0.3;  // 30% of sprite width
+        const hitboxHeightRatio = 0.5; // 50% of sprite height
+
+        // Set player variables: hitbox relative to sprite
+        player.cw = player.w * 0.3; // Setting collision width for player object
+        player.ch = player.h * 0.5; // Setting collision height for player object
+        player.cxOff = (player.w - player.cw) / 6;  // Center horizontally
+        player.cyOff = player.h - player.ch;  // Start hitbox at ground/feet level
+
+        // Debug box dimensions (optional, just mirrors actual box's dimensions)
+        player.debugW = player.cw;
+        player.debugH = player.ch;
+
+        // Player collision box fully defined
+        // Rerurns px, py = top-left corner coordinates of the player's collision box
+        const pw = player.cw;
+        const ph = player.ch;
+        function getPlayerCollisionBox() {
+            const px = player.facing === 1
+                ? player.x + player.cxOff // Facing right
+                : player.x + (player.w - player.cxOff - player.cw); // Adjust if facing left
+            const py = player.y + player.cyOff;
+            return { px: px, py: py };
+        }
+
+        // Draw player sprite
         function drawPlayer() {
             let anim = animations[player.currentAnim];
+            if (!anim.img.complete) return;
+
+            // Auto-calculate frame dimensions
+            let frameW = anim.img.width / anim.frames;
+            let frameH = anim.img.height;
+
+            // Pick slice based on current frame
+            let sx = player.frame * frameW;
+
+            // Draw with facing direction: Mirror if facing left
             ctx.save();
-            ctx.translate(player.x + player.w/2, player.y + player.h/2);
-            ctx.scale(player.facing, 1); // Flip for facing left
+            ctx.translate(player.x + player.w / 2, player.y + player.h / 2);
+            ctx.scale(player.facing, 1); // Flip horizontally if facing left
             ctx.drawImage(
                 anim.img,
-                player.frame * player.w, 0, player.w, player.h, // Source
-                -player.w/2, -player.h/2, player.w, player.h // Destination
+                sx, 0, (frameW), (frameH), // Source rectangle
+                -player.w / 2, -player.h / 2, // Draw centered
+                player.w, player.h            // Destination size
             );
             ctx.restore();
+
+            const { px, py } = getPlayerCollisionBox();
+            // Update debug box position to match player collision box
+            player.debugX = px;
+            player.debugY = py;
+
+            // Debug hitbox - purely for visualization
+            ctx.strokeStyle = "red";
+            ctx.lineWidth = 1;
+            ctx.strokeRect(
+                player.debugX,
+                player.debugY,
+                player.debugW,
+                player.debugH
+            );
         }
 
         // Game loop logic
@@ -227,16 +290,35 @@
                 player.facing = 1;
             }
 
+            const { px, py } = getPlayerCollisionBox();
+
             // Prevent going off screen
-            if (player.x < 0) player.x = 0;
-            if (player.x + player.w > canvas.width) player.x = canvas.width - player.w;
+            if (px < 0) {
+                player.x = player.facing === 1
+                    ? 0 - player.cxOff // Keep left edge inside
+                    : 0 - (player.w - player.cxOff - pw); // Adjust if facing left 
+            }
+            if (px + pw > canvas.width) {
+                player.x = player.facing === 1
+                    ? canvas.width - player.cxOff - pw // Keep right edge inside
+                    : canvas.width - (player.w - player.cxOff); // Adjust if facing right
+            }
 
             // Check for coin collection using player's collision box
             gameState.coins = gameState.coins.filter(c => {
-                let hit = player.x + 10 < c.x + c.w &&
-                          player.x + player.w - 10 > c.x &&
-                          player.y + 10 < c.y + c.h &&
-                          player.y + player.h - 10 > c.y;
+                // Coin collision box
+                const cx = c.x;
+                const cy = c.y;
+                const cw = c.w;
+                const ch = c.h;
+
+                // Check overlap
+                let hit = 
+                    px < cx + cw &&
+                    px + pw > cx &&
+                    py < cy + ch &&
+                    py + ph > cy;
+
                 if (hit) {
                     gameState.score++;
                     scoreDisplay.textContent = "Coins: " + gameState.score;
