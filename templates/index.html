@@ -16,7 +16,7 @@
             position: absolute;
             width: 100%;
             z-index: 10;
-            text-shadow: 0 0 8px #0ff, 0 0 16px #0ff; /* glowing light effect */
+            text-shadow: 0 0 8px rgb(247, 0, 255), 0 0 16px rgb(247, 0, 255); /* purple glow */
         }
         h1 {
             top: 40px;
@@ -34,6 +34,17 @@
             z-index: 10;
             color: #fff;
             text-shadow: 0 0 8px #ff0, 0 0 16px #ff0; /* yellow glow */
+        }
+        #musicControl {
+            position: absolute;
+            top: 20px;
+            left: 30px;
+            font-size: 12px;
+            z-index: 10;
+            color: #fff;
+            text-shadow: 0 0 8px #0f0, 0 0 16px #0f0; /* green glow */
+            cursor: pointer;
+            user-select: none;
         }
         canvas { 
             display: block; 
@@ -53,12 +64,16 @@
     <!-- Score counter -->
     <div id="score">Coins: 0</div>
 
+    <!-- Music control -->
+    <div id="musicControl">🔊 Music: ON (Click to toggle)</div>
+
     <canvas id="game" width="800" height="600"></canvas>
 
     <script>
         const canvas = document.getElementById("game");
         const ctx = canvas.getContext("2d");
         const scoreDisplay = document.getElementById("score");
+        const musicControl = document.getElementById("musicControl");
 
         // Make sure these match your groundTile.png dimensions
         const TILE_WIDTH = 64; 
@@ -69,6 +84,54 @@
             coins: [],
             score: 0
         };
+
+        // Background music setup (optional - won't block page load)
+        let bgMusic = new Audio;
+        let musicEnabled = false;
+        let musicLoaded = false;
+
+        if (musicControl) {
+            bgMusic.src = "/static/music.mp3";
+            bgMusic.loop = true;
+            bgMusic.volume = 0.3;
+
+            // Check if music file exists
+            bgMusic.addEventListener('canplaythrough', () => {
+                musicLoaded = true;
+                musicControl.textContent = "🔊 Music: OFF (Click to play)";
+                console.log("Music loaded successfully");
+            });
+
+            bgMusic.addEventListener('error', () => {
+                musicControl.textContent = "🔇 No music file";
+                musicControl.style.opacity = "0.5";
+                musicControl.style.cursor = "default";
+                console.log("Music file not found - game will work without it");
+            });
+
+            musicControl.addEventListener("click", () => {
+                if (!musicLoaded) return;
+                
+                musicEnabled = !musicEnabled;
+                if (musicEnabled) {
+                    bgMusic.play().catch(e => console.log("Audio play failed:", e));
+                    musicControl.textContent = "🔊 Music: ON (Click to toggle)";
+                } else {
+                    bgMusic.pause();
+                    musicControl.textContent = "🔇 Music: OFF (Click to play)";
+                }
+            });
+        }
+
+        let musicStarted = false;
+        function tryStartMusic() {
+            if (!musicStarted && musicEnabled && musicLoaded && bgMusic) {
+                bgMusic.play().catch(e => console.log("Audio play failed:", e));
+                musicStarted = true;
+            }
+        }
+        document.addEventListener("keydown", tryStartMusic, { once: true });
+        canvas.addEventListener("click", tryStartMusic, { once: true });
 
         // Make canvas responsive
         function resizeCanvas() {
@@ -244,16 +307,29 @@
             // Pick slice based on current frame
             let sx = player.frame * frameW;
 
-            // Draw with facing direction: Mirror if facing left
+            // FIXED: Use consistent drawing method that doesn't cause position shifts
             ctx.save();
-            ctx.translate(player.x + player.w / 2, player.y + player.h / 2);
-            ctx.scale(player.facing, 1); // Flip horizontally if facing left
-            ctx.drawImage(
-                anim.img,
-                sx, 0, (frameW), (frameH), // Source rectangle
-                -player.w / 2, -player.h / 2, // Draw centered
-                player.w, player.h            // Destination size
-            );
+
+            // When facing left, translate to the RIGHT edge of the sprite
+            // then flip, so the sprite stays in the same world position
+            if (player.facing === -1) {
+                ctx.translate(player.x + player.w, player.y);
+                ctx.scale(-1, 1);
+                ctx.drawImage(
+                    anim.img,
+                    sx, 0, frameW, frameH,
+                    0, 0,
+                    player.w, player.h
+                );
+            } else {
+                ctx.translate(player.x, player.y);
+                ctx.drawImage(
+                    anim.img,
+                    sx, 0, frameW, frameH,
+                    0, 0,
+                    player.w, player.h
+                );
+            }
 
             ctx.restore();
 
