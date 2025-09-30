@@ -112,7 +112,11 @@
             cxOff: 0, // x offset to center hitbox
             cyOff: 0, // y offset to raise hitbox
             dy: 0, 
-            speed: 5,
+            vx: 0, // horizontal velocity
+            accel: 0, // how quickly to reach target speed (lower = smoother)
+            maxSpeed: 0, // walking speed
+            runMultiplier: 0, // running boost
+            friction: 0, // slows player when no key is pressed
             isRunning: false, 
             jumping: false, 
             facing: 1,
@@ -224,6 +228,7 @@
                 ? player.x + player.cxOff // Facing right
                 : player.x + (player.w - player.cxOff - player.cw); // Adjust if facing left
             const py = player.y + player.cyOff;
+
             return { px: px, py: py };
         }
 
@@ -249,6 +254,7 @@
                 -player.w / 2, -player.h / 2, // Draw centered
                 player.w, player.h            // Destination size
             );
+
             ctx.restore();
 
             const { px, py } = getPlayerCollisionBox();
@@ -264,8 +270,15 @@
                 player.debugY,
                 player.debugW,
                 player.debugH
-            );
+            ); 
         }
+
+        // Add velocity and movement tuning to player
+        player.vx = 0;
+        player.accel = 0.2;
+        player.maxSpeed = 4;   
+        player.runMultiplier = 1.8;
+        player.friction = 0.1;
 
         // Game loop logic
         function update() {
@@ -279,29 +292,39 @@
                 player.jumping = false;
             }
             
-            // Move left/right
-            let speed = player.speed * (player.isRunning ? 2 : 1);
-            if (keys["ArrowLeft"]) {
-                player.x -= speed;
-                player.facing = -1;
+            // ---- Smooth Movement ----
+            let targetSpeed = 0;
+            if (keys["ArrowLeft"]) targetSpeed = -player.maxSpeed;
+            if (keys["ArrowRight"]) targetSpeed = player.maxSpeed;
+
+            // Apply running multiplier
+            if (player.isRunning) targetSpeed *= player.runMultiplier;
+
+            // Accelerate towards target speed
+            player.vx += (targetSpeed - player.vx) * player.accel;
+
+            // Apply friction if no key pressed
+            if (!keys["ArrowLeft"] && !keys["ArrowRight"]) {
+                player.vx *= (1 - player.friction);
             }
-            if (keys["ArrowRight"]) {
-                player.x += speed;
-                player.facing = 1;
-            }
+
+            // Update player position
+            player.x += player.vx;
+
+            // Update facing depending on velocity
+            if (player.vx > 0.1) player.facing = 1;
+            if (player.vx < -0.1) player.facing = -1;
 
             const { px, py } = getPlayerCollisionBox();
 
             // Prevent going off screen
             if (px < 0) {
-                player.x = player.facing === 1
-                    ? 0 - player.cxOff // Keep left edge inside
-                    : 0 - (player.w - player.cxOff - pw); // Adjust if facing left 
+                player.x -= px;  // Look right so box aligns with 0
+                player.vx = 0;
             }
             if (px + pw > canvas.width) {
-                player.x = player.facing === 1
-                    ? canvas.width - player.cxOff - pw // Keep right edge inside
-                    : canvas.width - (player.w - player.cxOff); // Adjust if facing right
+                player.x -= (px + pw - canvas.width); // Look left
+                player.vx = 0;
             }
 
             // Check for coin collection using player's collision box
