@@ -4,7 +4,7 @@ from pymongo.server_api import ServerApi
 from dotenv import load_dotenv
 import os
 
-from flask_cors import CORS # Import the CORS extension
+from flask_cors import CORS, cross_origin # Import the CORS extension
 
 # Load environment variables from .env
 load_dotenv()
@@ -26,41 +26,28 @@ except Exception as e:
 app = Flask(__name__)
 
 # ----------------------------------------------------
-# Configure CORS with specific resource mapping
+# Initialize CORS globally, but without resource rules
+# This registers the extension for use with decorators.
 # ----------------------------------------------------
-CORS (
-    app, 
-    # This configuration applies to ALL routes EXCEPT those explicitly excluded.
-    # Here I defined a default restrictive policy and overrode it for '/status'.
-    resources={
-        # Protect ALL routes (e.g., '/', '/api/data', '/game', etc.) 
-        # by only allowing the Vercel origin.
-        r"/*": {"origins": os.getenv("VERCEL_FRONTEND_URL")},
-        
-        # EXPLICITLY allow the /status route to be accessed from ANY origin.
-        # This overrides the global '/*' rule for this specific path.
-        r"/api/status": {"origins": "*"}
-    },
-    
-    # Ensure credentials (like cookies/sessions, if used) are included
-    supports_credentials=True 
-)
+CORS (app)
 
 # Define a route for the homepage
 @app.route('/')
 def index():
+    # This route is NOT decorated, so it has an unrestricted Access-Control-Allow-Origin
     # Flask looks in the 'templates' folder for this file
     return render_template('index.html')
 
 # Optional: A simple API endpoint to check server status
-# This route will have the CORS header set to Access-Control-Allow-Origin: <*> "ALLOW ALL"
 @app.route('/api/status')
 def api_status():
+    # This route is NOT decorated, so it has an unrestricted Access-Control-Allow-Origin
     return {'status': 'Flask service is running', 'version': '1.0'}
 
 # This route (and all others defined below) will have the 
 # CORS header set to Access-Control-Allow-Origin: <VERCEL_FRONTEND_URL>
-@app.route('/api/getMoviesData')
+@app.route('/api/getMoviesData', methods=['GET'])
+@cross_origin(origins=os.getenv("VERCEL_FRONTEND_URL"), supports_credentials=True)
 def get_movies_data():
     db = client['sample_mflix']
     collection = db['movies']

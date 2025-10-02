@@ -368,14 +368,14 @@ function drawPlayer() {
     player.debugY = py;
 
     // Debug hitbox - purely for visualization
-    ctx.strokeStyle = "red";
-    ctx.lineWidth = 1;
-    ctx.strokeRect(
-        player.debugX,
-        player.debugY,
-        player.debugW,
-        player.debugH
-    ); 
+    // ctx.strokeStyle = "red";
+    // ctx.lineWidth = 1;
+    // ctx.strokeRect(
+    //     player.debugX,
+    //     player.debugY,
+    //     player.debugW,
+    //     player.debugH
+    // ); 
 }
 
 function drawCoin(c, angle) {
