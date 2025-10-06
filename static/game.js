@@ -19,9 +19,6 @@ let gameState = {
     score: 0
 };
 
-// Fixed aspect ratio base (was missing and caused a ReferenceError)
-let baseAspect = null;
-
 // ===================================
 // I. MUSIC
 // ===================================
@@ -78,86 +75,9 @@ canvas.addEventListener("click", tryStartMusic, { once: true });
 
 // Make canvas responsive
 function resizeCanvas() {
-    const winW = window.innerWidth;
-    const winH = window.innerHeight;
-
-    // Prefer using background image aspect if available (stabilizes layout between portrait/landscape)
-    if (!baseAspect) {
-        if (bgImg && bgImg.naturalWidth && bgImg.naturalHeight) {
-            baseAspect = bgImg.naturalWidth / bgImg.naturalHeight;
-        } else {
-            baseAspect = 16/9; // safe fallback
-        }
-    }
-
-    // Compute a canvas size that preserves aspect ratio and fits inside the window
-    let targetW = winW;
-    let targetH = Math.round(targetW / baseAspect);
-    if (targetH > winH) {
-        targetH = winH;
-        targetW = Math.round(targetH * baseAspect);
-    }
-
-    // Remember previous logical size to preserve positions
-    const prevW = canvas.width || 0;
-    const prevH = canvas.height || 0;
-    const prevGround = gameState.GROUND_Y || 0;
-
-    // Set canvas CSS size and drawing buffer size (keep 1:1 device px for simplicity)
-    canvas.style.position = "absolute";
-    canvas.style.width = targetW + "px";
-    canvas.style.height = targetH + "px";
-    canvas.style.left = Math.round((winW - targetW) / 2) + "px";
-    canvas.style.top = Math.round((winH - targetH) / 2) + "px";
-
-    canvas.width = targetW;
-    canvas.height = targetH;
-
-    // Update ground (canvas coords)
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
     gameState.GROUND_Y = canvas.height - TILE_HEIGHT; // Ground level
-
-    // Preserve player X proportionally so it doesn't "jump" horizontally on resize
-    if (prevW && prevW > 0) {
-        player.x = (player.x / prevW) * canvas.width;
-    } else {
-        player.x = Math.min(player.x, canvas.width - player.w);
-    }
-
-    // Clamp vertical position to the new ground
-    if (player.y > gameState.GROUND_Y - player.h) {
-        player.y = gameState.GROUND_Y - player.h;
-        player.dy = 0;
-        player.jumping = false;
-    }
-
-    // Recompute coin positions from normalized/world values to avoid cumulative scaling.
-    // If a coin already has norm fields, use them. Otherwise compute them from previous sizes.
-    gameState.coins.forEach(c => {        
-        // Ensure coin has normalized world values (normX: 0..1, offsetAboveGroundNorm: fraction of prev height)
-        if (typeof c.normX !== 'number' || typeof c.offsetAboveGroundNorm !== 'number') {
-            // If we have previous canvas size, compute normalized values from previous pixels.
-            if (prevW && prevH) {
-                c.normX = Math.max(0, Math.min(1, c.x / prevW));
-                const prevOffset = prevGround - (c.y + c.h); // pixels above ground previously
-                c.offsetAboveGroundNorm = Math.max(0, prevOffset / prevH);
-            } else {
-                // Fallback defaults (center, modest height above ground)
-                c.normX = 0.5;
-                c.offsetAboveGroundNorm = 0.12;
-            }
-        }
-
-        // Recompute absolute positions based on current canvas size / ground
-        c.x = Math.round(c.normX * canvas.width);
-        const offsetPx = Math.round(c.offsetAboveGroundNorm * canvas.height);
-        c.y = gameState.GROUND_Y - c.h - offsetPx;
-
-        // Clamp into visible bounds
-        if (c.x < 8) c.x = 8;
-        if (c.x + c.w > canvas.width - 8) c.x = canvas.width - c.w - 8;
-        if (c.y + c.h > gameState.GROUND_Y) c.y = gameState.GROUND_Y - c.h - 8;
-        if (c.y < 8) c.y = 8;
-    });
 
     // Reposition joystick relative to the canvas (so it doesn't cover ground/player)
     if (joystick && joystick.baseEl) positionJoystickBase();
@@ -776,7 +696,7 @@ function spawnCoin() {
         offsetAboveGroundNorm: offsetAboveGroundNorm
     });
 }
-setInterval(spawnCoin, 5000);
+setInterval(spawnCoin, 4000);
 
 function loop() {
     update();
@@ -801,14 +721,7 @@ allAssets.forEach(img => {
         assetsLoaded++;
         if (assetsLoaded === allAssets.length) {
             console.log("All assets loaded. Starting game loop.");
-            // pick a stable aspect if bgImg is available now
-            if (!baseAspect && bgImg && bgImg.naturalWidth && bgImg.naturalHeight) {
-                baseAspect = bgImg.naturalWidth / bgImg.naturalHeight;
-            }
             resizeCanvas(); // Initial call to set size and GROUND_Y
-            if (!window.__coinSpawnInterval) {
-                window.__coinSpawnInterval = setInterval(spawnCoin, 5000);
-            }
             loop(); 
         }
     };
@@ -819,14 +732,7 @@ allAssets.forEach(img => {
         assetsLoaded++; 
         if (assetsLoaded === allAssets.length) {
             console.log("Starting game loop with missing asset(s).");
-            // pick a stable aspect if bgImg is available now
-            if (!baseAspect && bgImg && bgImg.naturalWidth && bgImg.naturalHeight) {
-                baseAspect = bgImg.naturalWidth / bgImg.naturalHeight;
-            }
             resizeCanvas();
-            if (!window.__coinSpawnInterval) {
-                window.__coinSpawnInterval = setInterval(spawnCoin, 5000);
-            }
             loop(); 
         }
     };
