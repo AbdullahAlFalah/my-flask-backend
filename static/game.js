@@ -162,7 +162,7 @@ let keys = {};
 // Key listeners for movement
 document.addEventListener("keydown", e => {
     keys[e.code] = true;
-    if (e.code === "Space" && !player.jumping) {
+    if ((e.code === "Space" || e.code === "ArrowUp") && !player.jumping) {
         player.dy = -15; // Jump strength
         player.jumping = true;
     }
@@ -177,6 +177,44 @@ document.addEventListener("keyup", e => {
         player.isRunning = false;
     }
 });
+
+// Simple touch support for mobile
+function onTouchStart(e) {
+    // prevent scrolling while interacting with the game
+    e.preventDefault();
+    // Use first touch as the controller for basic movement/jump
+    const t = e.touches[0];
+    if (!t) return;
+    const x = t.clientX;
+
+    // Left third -> left, right third -> right, middle -> jump
+    if (x < gameState.width / 3) {
+        keys["ArrowLeft"] = true;
+    } else if (x > (gameState.width * 2 / 3)) {
+        keys["ArrowRight"] = true;
+    } else {
+        // center tap as jump
+        if (!player.jumping) {
+            player.dy = -15;
+            player.jumping = true;
+        }
+    }
+}
+
+function onTouchEnd(e) {
+    e.preventDefault();
+    // If any touches remain, re-evaluate; otherwise clear movement keys
+    if (e.touches && e.touches.length > 0) {
+        // there are still active touches; set keys according to the first remaining touch
+        const t = e.touches[0];
+        const x = t.clientX;
+        keys["ArrowLeft"] = x < gameState.width / 3;
+        keys["ArrowRight"] = x > (gameState.width * 2 / 3);
+    } else {
+        keys["ArrowLeft"] = false;
+        keys["ArrowRight"] = false;
+    }
+}
 
 // Player collision box fully defined
 // Helper function to get the player's collision box coordinates (top-left corner)

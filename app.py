@@ -2,6 +2,9 @@ from functools import wraps
 from flask import Flask, jsonify, render_template, request
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
+from pymongo import DESCENDING
+from datetime import datetime
+from bson import ObjectId
 from dotenv import load_dotenv
 import os
 
@@ -28,6 +31,20 @@ app = Flask(__name__)
 
 # Initialize CORS globally for decorated and non-decorated routes
 CORS (app)
+
+# ==========================================================
+# UNIVERSAL ERROR HANDLER DECORATOR
+# ==========================================================
+def handle_errors(f):
+    """Wraps any route to catch unexpected exceptions and return JSON errors."""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        try:
+            return f(*args, **kwargs)
+        except Exception as e:
+            print(f"❌ Error in route {f.__name__}: {str(e)}")
+            return jsonify({"error": str(e)}), 500
+    return decorated_function
 
 # ==========================================================
 # NEW SERVER-SIDE SECURITY DECORATOR
@@ -77,6 +94,7 @@ def index():
 
 # Optional: A simple API endpoint to check server status
 @app.route('/api/status')
+@handle_errors
 def api_status():
     # This route is NOT decorated, so it has an unrestricted Access-Control-Allow-Origin
     return {'status': 'Flask service is running', 'version': '1.0'}
@@ -86,9 +104,13 @@ def api_status():
 # Use the CORS decorator to enforce browser security (prevents malicious scripts)
 # Use the secure_route decorator to enforce server security (prevents direct access)
 
+# ==========================================================
+# GET MOVIES
+# ==========================================================
 @app.route('/api/getMoviesData', methods=['GET'])
 @cross_origin(origins=os.getenv("VERCEL_FRONTEND_URL"), supports_credentials=True)
 @secure_route
+@handle_errors
 def get_movies_data():
     db = client['sample_mflix']
     collection = db['movies']
@@ -101,6 +123,65 @@ def get_movies_data():
         movie['_id'] = str(movie['_id'])
     
     return {'movies': movies}
+
+
+# ==========================================================
+# GET COMMENTS (Sorted by newest first)
+# ==========================================================
+@app.route('/api/getCommentsData', methods=['GET'])
+@cross_origin(origins=os.getenv("VERCEL_FRONTEND_URL"), supports_credentials=True)
+@secure_route
+@handle_errors
+def get_comments_data():
+    db = client['sample_mflix']
+    collection = db['comments']
+
+    # Fetch a limited number of comment documents
+    comments = list(collection.find().sort("date", DESCENDING).limit(10))
+
+    # Convert ObjectId to string for JSON serialization
+    for comment in comments:
+        comment['_id'] = str(comment['_id'])
+        comment['movie_id'] = str(comment['movie_id'])
+        # Convert datetime to ISO format
+        if isinstance(comment['date'], datetime):
+            comment['date'] = comment['date'].isoformat()
+    
+    return jsonify({"comments": comments})
+
+# ==========================================================
+# POST A COMMENT
+# ==========================================================
+@app.route('/api/addComment', methods=['POST'])
+@cross_origin(origins=os.getenv("VERCEL_FRONTEND_URL"), supports_credentials=True)
+@secure_route
+@handle_errors
+def add_comment():
+    db = client['sample_mflix']
+    collection = db['comments']
+
+    data = request.get_json()
+
+    # Validate required fields
+    required_fields = ['name', 'email', 'text', 'movie_id']
+    if not all(field in data and data[field] for field in required_fields):
+        return jsonify({"error": "Missing one or more required fields"}), 400
+
+    # Create the new comment document
+    new_comment = {
+        "name": data['name'],
+        "email": data['email'],
+        "text": data['text'],
+        "movie_id": ObjectId(data['movie_id']),  # must be valid ObjectId
+        "date": datetime.utcnow()
+    }
+
+    result = collection.insert_one(new_comment)
+
+    return jsonify({
+        "message": "Comment added successfully!",
+        "inserted_id": str(result.inserted_id)
+    }), 201
 
 if __name__ == '__main__':
     app.run(debug=True)
