@@ -81,8 +81,14 @@ function resizeCanvas() {
     const winW = window.innerWidth;
     const winH = window.innerHeight;
 
-    // Initialize base aspect ratio on first run (preserve original layout)
-    if (!baseAspect) baseAspect = winW / winH;
+    // Prefer using background image aspect if available (stabilizes layout between portrait/landscape)
+    if (!baseAspect) {
+        if (bgImg && bgImg.naturalWidth && bgImg.naturalHeight) {
+            baseAspect = bgImg.naturalWidth / bgImg.naturalHeight;
+        } else {
+            baseAspect = 16/9; // safe fallback
+        }
+    }
 
     // Compute a canvas size that preserves aspect ratio and fits inside the window
     let targetW = winW;
@@ -122,29 +128,6 @@ function resizeCanvas() {
         player.y = gameState.GROUND_Y - player.h;
         player.dy = 0;
         player.jumping = false;
-    }
-
-    // Scale existing coins proportionally when we have previous size
-    if (prevW && prevH) {
-        const sx = canvas.width / prevW;
-        const sy = canvas.height / prevH;
-        gameState.coins.forEach(c => {
-            c.x = Math.round(c.x * sx);
-            c.y = Math.round(c.y * sy);
-            // keep coins above ground
-            if (c.y + c.h > gameState.GROUND_Y) {
-                c.y = gameState.GROUND_Y - c.h - 8; // small offset above ground
-            }
-            // ensure coins inside horizontal bounds
-            if (c.x < 8) c.x = 8;
-            if (c.x + c.w > canvas.width - 8) c.x = canvas.width - c.w - 8;
-        });
-    } else {
-        // first run: clamp coins into visible area if any
-        gameState.coins.forEach(c => {
-            if (c.x + c.w > canvas.width) c.x = Math.max(8, canvas.width - c.w - 8);
-            if (c.y + c.h > gameState.GROUND_Y) c.y = gameState.GROUND_Y - c.h - 8;
-        });
     }
 
     // Recompute coin positions from normalized/world values to avoid cumulative scaling.
@@ -363,6 +346,10 @@ if (IS_MOBILE) {
 }
 
 function positionJoystickBase() {
+
+    // If joystick UI not created (desktop), do nothing
+    if (!joystick || !joystick.baseEl || !joystick.thumbEl) return;
+
     // Compute base position/sizes relative to the canvas bounding rect so portrait/landscape both feel right
     const rect = canvas.getBoundingClientRect();
     const cw = rect.width;
@@ -377,12 +364,18 @@ function positionJoystickBase() {
     joystick.thumbRadius = thumbRadius;
     joystick.maxRadius = maxRadius;
 
-    // Place the base a bit in from the left and just above the ground tiles within the canvas
-    // We map the canvas ground Y into screen coordinates using rect.top
-    const groundScreenY = rect.top + gameState.GROUND_Y; // screen Y of ground line
-    // baseY sits above ground line so it doesn't overlap the tiles/player
-    const baseY = Math.round(groundScreenY - (joystick.radius + 12));
-    const baseX = Math.round(rect.left + Math.max(60, cw * 0.12));
+    // Map the canvas ground Y into screen coordinates using rect.top
+    const groundScreenY = rect.top + gameState.GROUND_Y;
+
+    // Desired placement: right side, approx mid-height but not overlapping ground
+    const insetX = Math.max(60, cw * 0.12);
+    const baseX = Math.round(rect.left + cw - insetX); // baseX: inset from the right edge of the canvas
+
+    // baseY: around 40..50% down from top (mid-ish), but clamp so it stays above ground and not too close to top
+    const preferredY = Math.round(rect.top + ch * 0.45); // mid-ish
+    const minY = rect.top + 60; // don't go too high
+    const maxY = groundScreenY - (joystick.radius + 12); // keep above ground
+    const baseY = Math.round(Math.min(Math.max(preferredY, minY), maxY));
 
     joystick.baseX = baseX;
     joystick.baseY = baseY;
@@ -808,18 +801,32 @@ allAssets.forEach(img => {
         assetsLoaded++;
         if (assetsLoaded === allAssets.length) {
             console.log("All assets loaded. Starting game loop.");
+            // pick a stable aspect if bgImg is available now
+            if (!baseAspect && bgImg && bgImg.naturalWidth && bgImg.naturalHeight) {
+                baseAspect = bgImg.naturalWidth / bgImg.naturalHeight;
+            }
             resizeCanvas(); // Initial call to set size and GROUND_Y
+            if (!window.__coinSpawnInterval) {
+                window.__coinSpawnInterval = setInterval(spawnCoin, 5000);
+            }
             loop(); 
         }
     };
     img.onerror = (e) => {
-        // Fallback for missing/misnamed assets (like your previous case-sensitivity issue)
+        // Fallback for missing/misnamed assets (like my previous case-sensitivity issue)
         console.error(`Failed to load asset: ${img.src}. Check capitalization/path.`);
         // To prevent blocking the game, we can choose to proceed if it's not a critical asset.
         assetsLoaded++; 
         if (assetsLoaded === allAssets.length) {
             console.log("Starting game loop with missing asset(s).");
+            // pick a stable aspect if bgImg is available now
+            if (!baseAspect && bgImg && bgImg.naturalWidth && bgImg.naturalHeight) {
+                baseAspect = bgImg.naturalWidth / bgImg.naturalHeight;
+            }
             resizeCanvas();
+            if (!window.__coinSpawnInterval) {
+                window.__coinSpawnInterval = setInterval(spawnCoin, 5000);
+            }
             loop(); 
         }
     };
