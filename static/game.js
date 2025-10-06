@@ -75,9 +75,63 @@ canvas.addEventListener("click", tryStartMusic, { once: true });
 
 // Make canvas responsive
 function resizeCanvas() {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-    gameState.GROUND_Y = canvas.height - TILE_HEIGHT; // ground level
+    const winW = window.innerWidth;
+    const winH = window.innerHeight;
+
+    // Initialize base aspect ratio on first run (preserve original layout)
+    if (!baseAspect) baseAspect = winW / winH;
+
+    // Compute a canvas size that preserves aspect ratio and fits inside the window
+    let targetW = winW;
+    let targetH = Math.round(targetW / baseAspect);
+    if (targetH > winH) {
+        targetH = winH;
+        targetW = Math.round(targetH * baseAspect);
+    }
+
+    // Remember previous logical size to preserve positions
+    const prevW = canvas.width;
+    const prevH = canvas.height;
+
+    // Set canvas CSS size and drawing buffer size (keep 1:1 device px for simplicity)
+    canvas.style.position = "absolute";
+    canvas.style.width = targetW + "px";
+    canvas.style.height = targetH + "px";
+    canvas.style.left = Math.round((winW - targetW) / 2) + "px";
+    canvas.style.top = Math.round((winH - targetH) / 2) + "px";
+
+    canvas.width = targetW;
+    canvas.height = targetH;
+
+    // Update ground (canvas coords)
+    gameState.GROUND_Y = canvas.height - TILE_HEIGHT; // Ground level
+
+    // Preserve player X proportionally so it doesn't "jump" horizontally on resize
+    if (prevW && prevW > 0) {
+        player.x = (player.x / prevW) * canvas.width;
+    } else {
+        player.x = Math.min(player.x, canvas.width - player.w);
+    }
+
+    // Clamp vertical position to the new ground
+    if (player.y > gameState.GROUND_Y - player.h) {
+        player.y = gameState.GROUND_Y - player.h;
+        player.dy = 0;
+        player.jumping = false;
+    }
+
+    // Reposition coins if they are outside the new bounds or below ground
+    gameState.coins.forEach(c => {
+        if (c.x + c.w > canvas.width) {
+            c.x = Math.max(0, canvas.width - c.w - 10);
+        }
+        if (c.y + c.h > gameState.GROUND_Y) {
+            c.y = gameState.GROUND_Y - c.h - 80;
+        }
+    });
+
+    // Reposition joystick relative to the canvas (so it doesn't cover ground/player)
+    positionJoystickBase();
 }
 window.addEventListener("resize", resizeCanvas);
 
@@ -200,33 +254,42 @@ let joystick = {
     style.textContent = `
     .joystick-base {
         position: fixed;
-        left: 0; top: 0;
-        width: ${joystick.radius * 2}px;
-        height: ${joystick.radius * 2}px;
-        margin-left: ${-joystick.radius}px;
-        margin-top: ${-joystick.radius}px;
         border-radius: 50%;
-        background: rgba(0,0,0,0.22);
+        background: radial-gradient(rgba(0,0,0,0.28), rgba(0,0,0,0.18));
+        box-shadow: 0 6px 18px rgba(0,0,0,0.25);
         z-index: 9998;
         pointer-events: none;
         display: block;
+        backdrop-filter: blur(4px);
+        border: 1px solid rgba(255,255,255,0.03);
+    }
+    .joystick-inner {
+        position: absolute;
+        left: 50%; top: 50%;
+        transform: translate(-50%, -50%);
+        width: 56%; height: 56%;
+        border-radius: 50%;
+        background: rgba(255,255,255,0.06);
+        box-shadow: inset 0 2px 6px rgba(0,0,0,0.25);
     }
     .joystick-thumb {
         position: fixed;
-        width: ${joystick.thumbRadius * 2}px;
-        height: ${joystick.thumbRadius * 2}px;
-        margin-left: ${-joystick.thumbRadius}px;
-        margin-top: ${-joystick.thumbRadius}px;
         border-radius: 50%;
-        background: rgba(255,255,255,0.38);
+        background: linear-gradient(180deg, rgba(255,255,255,0.44), rgba(255,255,255,0.28));
+        border: 1px solid rgba(0,0,0,0.12);
         z-index: 9999;
         pointer-events: none;
         display: none;
+        box-shadow: 0 6px 14px rgba(0,0,0,0.28);
     }`;
     document.head.appendChild(style);
 
     const base = document.createElement('div');
     base.className = 'joystick-base';
+    // inner ring for clarity
+    const inner = document.createElement('div');
+    inner.className = 'joystick-inner';
+    base.appendChild(inner);
     document.body.appendChild(base);
 
     const thumb = document.createElement('div');
@@ -241,11 +304,44 @@ let joystick = {
 })();
 
 function positionJoystickBase() {
-    joystick.baseY = window.innerHeight - 120;
-    // keep baseX constant from left edge (80)
+    // Compute base position/sizes relative to the canvas bounding rect so portrait/landscape both feel right
+    const rect = canvas.getBoundingClientRect();
+    const cw = rect.width;
+    const ch = rect.height;
+
+    // Choose sizes relative to canvas width but clamp to sensible min/max
+    const baseRadius = Math.round(Math.max(44, Math.min(110, cw * 0.14)));
+    const thumbRadius = Math.round(Math.max(18, Math.min(44, cw * 0.055)));
+    const maxRadius = Math.round(baseRadius * 0.7);
+
+    joystick.radius = baseRadius;
+    joystick.thumbRadius = thumbRadius;
+    joystick.maxRadius = maxRadius;
+
+    // Place the base a bit in from the left and just above the ground tiles within the canvas
+    // We map the canvas ground Y into screen coordinates using rect.top
+    const groundScreenY = rect.top + gameState.GROUND_Y; // screen Y of ground line
+    // baseY sits above ground line so it doesn't overlap the tiles/player
+    const baseY = Math.round(groundScreenY - (joystick.radius + 12));
+    const baseX = Math.round(rect.left + Math.max(60, cw * 0.12));
+
+    joystick.baseX = baseX;
+    joystick.baseY = baseY;
+
+    // Apply inline styles (override the generic CSS)
+    joystick.baseEl.style.width = `${joystick.radius * 2}px`;
+    joystick.baseEl.style.height = `${joystick.radius * 2}px`;
+    joystick.baseEl.style.marginLeft = `${-joystick.radius}px`;
+    joystick.baseEl.style.marginTop = `${-joystick.radius}px`;
     joystick.baseEl.style.left = `${joystick.baseX}px`;
     joystick.baseEl.style.top = `${joystick.baseY}px`;
-    // if thumb not active, center it visually on base
+
+    joystick.thumbEl.style.width = `${joystick.thumbRadius * 2}px`;
+    joystick.thumbEl.style.height = `${joystick.thumbRadius * 2}px`;
+    joystick.thumbEl.style.marginLeft = `${-joystick.thumbRadius}px`;
+    joystick.thumbEl.style.marginTop = `${-joystick.thumbRadius}px`;
+
+    // Center thumb on base if inactive
     if (!joystick.active) {
         joystick.thumbEl.style.left = `${joystick.baseX}px`;
         joystick.thumbEl.style.top = `${joystick.baseY}px`;
