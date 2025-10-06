@@ -179,42 +179,198 @@ document.addEventListener("keyup", e => {
 });
 
 // Simple touch support for mobile
-function onTouchStart(e) {
-    // prevent scrolling while interacting with the game
-    e.preventDefault();
-    // Use first touch as the controller for basic movement/jump
-    const t = e.touches[0];
-    if (!t) return;
-    const x = t.clientX;
+// Joystick state (fixed position)
+let touchStarts = {}; // map touchId => {x,y,t,moved}
+let joystick = {
+    baseX: 80, // will be updated on resize
+    baseY: window.innerHeight - 120,
+    radius: 70,    // outer radius of base
+    thumbRadius: 28,
+    maxRadius: 56, // thumb travel radius
+    active: false,
+    id: null,
+    normX: 0, // -1 .. 1 horizontal
+    baseEl: null,
+    thumbEl: null
+};
 
-    // Left third -> left, right third -> right, middle -> jump
-    if (x < gameState.width / 3) {
-        keys["ArrowLeft"] = true;
-    } else if (x > (gameState.width * 2 / 3)) {
-        keys["ArrowRight"] = true;
-    } else {
-        // center tap as jump
-        if (!player.jumping) {
-            player.dy = -15;
-            player.jumping = true;
+// Create fixed joystick UI
+(function createFixedJoystick() {
+    const style = document.createElement('style');
+    style.textContent = `
+    .joystick-base {
+        position: fixed;
+        left: 0; top: 0;
+        width: ${joystick.radius * 2}px;
+        height: ${joystick.radius * 2}px;
+        margin-left: ${-joystick.radius}px;
+        margin-top: ${-joystick.radius}px;
+        border-radius: 50%;
+        background: rgba(0,0,0,0.22);
+        z-index: 9998;
+        pointer-events: none;
+        display: block;
+    }
+    .joystick-thumb {
+        position: fixed;
+        width: ${joystick.thumbRadius * 2}px;
+        height: ${joystick.thumbRadius * 2}px;
+        margin-left: ${-joystick.thumbRadius}px;
+        margin-top: ${-joystick.thumbRadius}px;
+        border-radius: 50%;
+        background: rgba(255,255,255,0.38);
+        z-index: 9999;
+        pointer-events: none;
+        display: none;
+    }`;
+    document.head.appendChild(style);
+
+    const base = document.createElement('div');
+    base.className = 'joystick-base';
+    document.body.appendChild(base);
+
+    const thumb = document.createElement('div');
+    thumb.className = 'joystick-thumb';
+    document.body.appendChild(thumb);
+
+    joystick.baseEl = base;
+    joystick.thumbEl = thumb;
+
+    // Position base initially
+    positionJoystickBase();
+})();
+
+function positionJoystickBase() {
+    joystick.baseY = window.innerHeight - 120;
+    // keep baseX constant from left edge (80)
+    joystick.baseEl.style.left = `${joystick.baseX}px`;
+    joystick.baseEl.style.top = `${joystick.baseY}px`;
+    // if thumb not active, center it visually on base
+    if (!joystick.active) {
+        joystick.thumbEl.style.left = `${joystick.baseX}px`;
+        joystick.thumbEl.style.top = `${joystick.baseY}px`;
+    }
+}
+
+// Update base position on resize
+window.addEventListener('resize', () => {
+    positionJoystickBase();
+});
+
+// Helpers to move/activate joystick
+function activateJoystick(touch) {
+    joystick.active = true;
+    joystick.id = touch.identifier;
+    joystick.thumbEl.style.display = 'block';
+    moveJoystickTo(touch.clientX, touch.clientY);
+}
+
+function moveJoystickTo(clientX, clientY) {
+    const dx = clientX - joystick.baseX;
+    const dy = clientY - joystick.baseY;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    const maxR = joystick.maxRadius;
+    const clamped = Math.min(dist, maxR);
+    const angle = Math.atan2(dy, dx);
+    const thumbX = joystick.baseX + Math.cos(angle) * clamped;
+    // Only horizontal movement needed for controls, but keep thumb Y for UX
+    const thumbY = joystick.baseY + Math.sin(angle) * clamped;
+
+    joystick.thumbEl.style.left = `${thumbX}px`;
+    joystick.thumbEl.style.top = `${thumbY}px`;
+
+    // normalize horizontal -1..1
+    let nx = (Math.cos(angle) * clamped) / maxR;
+    if (Math.abs(nx) < 0.15) nx = 0;
+    joystick.normX = nx;
+
+    // Map to left/right movement keys
+    keys["ArrowLeft"] = joystick.normX < -0.15;
+    keys["ArrowRight"] = joystick.normX > 0.15;
+}
+
+function deactivateJoystick() {
+    joystick.active = false;
+    joystick.id = null;
+    joystick.normX = 0;
+    keys["ArrowLeft"] = false;
+    keys["ArrowRight"] = false;
+    joystick.thumbEl.style.display = 'none';
+    // reset thumb to center
+    joystick.thumbEl.style.left = `${joystick.baseX}px`;
+    joystick.thumbEl.style.top = `${joystick.baseY}px`;
+}
+
+// Touch handlers on canvas
+canvas.addEventListener('touchstart', function (e) {
+    // Prevent page scrolling while interacting
+    e.preventDefault();
+
+    for (let i = 0; i < e.changedTouches.length; i++) {
+        const t = e.changedTouches[i];
+        touchStarts[t.identifier] = { x: t.clientX, y: t.clientY, t: Date.now(), moved: false };
+
+        // If touch started inside base circle -> joystick control
+        const dx = t.clientX - joystick.baseX;
+        const dy = t.clientY - joystick.baseY;
+        if (Math.sqrt(dx*dx + dy*dy) <= joystick.radius) {
+            // Start joystick control
+            activateJoystick(t);
+            // consume this touch for joystick only
+            continue;
+        }
+        // Otherwise, treat this touch as potential tap-to-jump (see touchend)
+    }
+}, { passive: false });
+
+canvas.addEventListener('touchmove', function (e) {
+    e.preventDefault();
+    for (let i = 0; i < e.changedTouches.length; i++) {
+        const t = e.changedTouches[i];
+        const ts = touchStarts[t.identifier];
+        if (ts) ts.moved = true;
+        if (joystick.active && joystick.id === t.identifier) {
+            moveJoystickTo(t.clientX, t.clientY);
         }
     }
-}
+}, { passive: false });
 
-function onTouchEnd(e) {
+canvas.addEventListener('touchend', function (e) {
     e.preventDefault();
-    // If any touches remain, re-evaluate; otherwise clear movement keys
-    if (e.touches && e.touches.length > 0) {
-        // there are still active touches; set keys according to the first remaining touch
-        const t = e.touches[0];
-        const x = t.clientX;
-        keys["ArrowLeft"] = x < gameState.width / 3;
-        keys["ArrowRight"] = x > (gameState.width * 2 / 3);
-    } else {
-        keys["ArrowLeft"] = false;
-        keys["ArrowRight"] = false;
+    for (let i = 0; i < e.changedTouches.length; i++) {
+        const t = e.changedTouches[i];
+        const ts = touchStarts[t.identifier];
+
+        // If this was the joystick touch, deactivate
+        if (joystick.active && joystick.id === t.identifier) {
+            deactivateJoystick();
+        } else if (ts) {
+            // Tap detection for jump: short and little movement
+            const dt = Date.now() - ts.t;
+            const dx = t.clientX - ts.x;
+            const dy = t.clientY - ts.y;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            if (dt < 300 && dist < 30) {
+                // perform jump
+                if (!player.jumping) {
+                    player.dy = -15;
+                    player.jumping = true;
+                }
+            }
+        }
+
+        delete touchStarts[t.identifier];
     }
-}
+}, { passive: false });
+
+canvas.addEventListener('touchcancel', function (e) {
+    e.preventDefault();
+    // Reset joystick and cleanup
+    deactivateJoystick();
+    for (let i = 0; i < e.changedTouches.length; i++) {
+        delete touchStarts[e.changedTouches[i].identifier];
+    }
+}, { passive: false });
 
 // Player collision box fully defined
 // Helper function to get the player's collision box coordinates (top-left corner)
