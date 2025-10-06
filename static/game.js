@@ -19,6 +19,9 @@ let gameState = {
     score: 0
 };
 
+// Fixed aspect ratio base (was missing and caused a ReferenceError)
+let baseAspect = null;
+
 // ===================================
 // I. MUSIC
 // ===================================
@@ -90,8 +93,9 @@ function resizeCanvas() {
     }
 
     // Remember previous logical size to preserve positions
-    const prevW = canvas.width;
-    const prevH = canvas.height;
+    const prevW = canvas.width || 0;
+    const prevH = canvas.height || 0;
+    const prevGround = gameState.GROUND_Y || 0;
 
     // Set canvas CSS size and drawing buffer size (keep 1:1 device px for simplicity)
     canvas.style.position = "absolute";
@@ -120,18 +124,60 @@ function resizeCanvas() {
         player.jumping = false;
     }
 
-    // Reposition coins if they are outside the new bounds or below ground
-    gameState.coins.forEach(c => {
-        if (c.x + c.w > canvas.width) {
-            c.x = Math.max(0, canvas.width - c.w - 10);
+    // Scale existing coins proportionally when we have previous size
+    if (prevW && prevH) {
+        const sx = canvas.width / prevW;
+        const sy = canvas.height / prevH;
+        gameState.coins.forEach(c => {
+            c.x = Math.round(c.x * sx);
+            c.y = Math.round(c.y * sy);
+            // keep coins above ground
+            if (c.y + c.h > gameState.GROUND_Y) {
+                c.y = gameState.GROUND_Y - c.h - 8; // small offset above ground
+            }
+            // ensure coins inside horizontal bounds
+            if (c.x < 8) c.x = 8;
+            if (c.x + c.w > canvas.width - 8) c.x = canvas.width - c.w - 8;
+        });
+    } else {
+        // first run: clamp coins into visible area if any
+        gameState.coins.forEach(c => {
+            if (c.x + c.w > canvas.width) c.x = Math.max(8, canvas.width - c.w - 8);
+            if (c.y + c.h > gameState.GROUND_Y) c.y = gameState.GROUND_Y - c.h - 8;
+        });
+    }
+
+    // Recompute coin positions from normalized/world values to avoid cumulative scaling.
+    // If a coin already has norm fields, use them. Otherwise compute them from previous sizes.
+    gameState.coins.forEach(c => {        
+        // Ensure coin has normalized world values (normX: 0..1, offsetAboveGroundNorm: fraction of prev height)
+        if (typeof c.normX !== 'number' || typeof c.offsetAboveGroundNorm !== 'number') {
+            // If we have previous canvas size, compute normalized values from previous pixels.
+            if (prevW && prevH) {
+                c.normX = Math.max(0, Math.min(1, c.x / prevW));
+                const prevOffset = prevGround - (c.y + c.h); // pixels above ground previously
+                c.offsetAboveGroundNorm = Math.max(0, prevOffset / prevH);
+            } else {
+                // Fallback defaults (center, modest height above ground)
+                c.normX = 0.5;
+                c.offsetAboveGroundNorm = 0.12;
+            }
         }
-        if (c.y + c.h > gameState.GROUND_Y) {
-            c.y = gameState.GROUND_Y - c.h - 80;
-        }
+
+        // Recompute absolute positions based on current canvas size / ground
+        c.x = Math.round(c.normX * canvas.width);
+        const offsetPx = Math.round(c.offsetAboveGroundNorm * canvas.height);
+        c.y = gameState.GROUND_Y - c.h - offsetPx;
+
+        // Clamp into visible bounds
+        if (c.x < 8) c.x = 8;
+        if (c.x + c.w > canvas.width - 8) c.x = canvas.width - c.w - 8;
+        if (c.y + c.h > gameState.GROUND_Y) c.y = gameState.GROUND_Y - c.h - 8;
+        if (c.y < 8) c.y = 8;
     });
 
     // Reposition joystick relative to the canvas (so it doesn't cover ground/player)
-    positionJoystickBase();
+    if (joystick && joystick.baseEl) positionJoystickBase();
 }
 window.addEventListener("resize", resizeCanvas);
 
@@ -248,60 +294,73 @@ let joystick = {
     thumbEl: null
 };
 
-// Create fixed joystick UI
-(function createFixedJoystick() {
-    const style = document.createElement('style');
-    style.textContent = `
-    .joystick-base {
-        position: fixed;
-        border-radius: 50%;
-        background: radial-gradient(rgba(0,0,0,0.28), rgba(0,0,0,0.18));
-        box-shadow: 0 6px 18px rgba(0,0,0,0.25);
-        z-index: 9998;
-        pointer-events: none;
-        display: block;
-        backdrop-filter: blur(4px);
-        border: 1px solid rgba(255,255,255,0.03);
-    }
-    .joystick-inner {
-        position: absolute;
-        left: 50%; top: 50%;
-        transform: translate(-50%, -50%);
-        width: 56%; height: 56%;
-        border-radius: 50%;
-        background: rgba(255,255,255,0.06);
-        box-shadow: inset 0 2px 6px rgba(0,0,0,0.25);
-    }
-    .joystick-thumb {
-        position: fixed;
-        border-radius: 50%;
-        background: linear-gradient(180deg, rgba(255,255,255,0.44), rgba(255,255,255,0.28));
-        border: 1px solid rgba(0,0,0,0.12);
-        z-index: 9999;
-        pointer-events: none;
-        display: none;
-        box-shadow: 0 6px 14px rgba(0,0,0,0.28);
-    }`;
-    document.head.appendChild(style);
-
-    const base = document.createElement('div');
-    base.className = 'joystick-base';
-    // inner ring for clarity
-    const inner = document.createElement('div');
-    inner.className = 'joystick-inner';
-    base.appendChild(inner);
-    document.body.appendChild(base);
-
-    const thumb = document.createElement('div');
-    thumb.className = 'joystick-thumb';
-    document.body.appendChild(thumb);
-
-    joystick.baseEl = base;
-    joystick.thumbEl = thumb;
-
-    // Position base initially
-    positionJoystickBase();
+// Mobile detection helper
+const IS_MOBILE = (function() {
+    return (('ontouchstart' in window) ||
+        (navigator.maxTouchPoints && navigator.maxTouchPoints > 0) ||
+        /Mobi|Android|iPhone|iPad|Tablet/i.test(navigator.userAgent));
 })();
+
+// Create fixed joystick UI (styled and responsive) only on mobile
+if (IS_MOBILE) {
+    (function createFixedJoystick() {
+        const style = document.createElement('style');
+        style.textContent = `
+        .joystick-base {
+            position: fixed;
+            border-radius: 50%;
+            background: radial-gradient(rgba(0,0,0,0.28), rgba(0,0,0,0.18));
+            box-shadow: 0 6px 18px rgba(0,0,0,0.25);
+            z-index: 9998;
+            pointer-events: none;
+            display: block;
+            backdrop-filter: blur(4px);
+            border: 1px solid rgba(255,255,255,0.03);
+        }
+        .joystick-inner {
+            position: absolute;
+            left: 50%; top: 50%;
+            transform: translate(-50%, -50%);
+            width: 56%; height: 56%;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.06);
+            box-shadow: inset 0 2px 6px rgba(0,0,0,0.25);
+        }
+        .joystick-thumb {
+            position: fixed;
+            border-radius: 50%;
+            background: linear-gradient(180deg, rgba(255,255,255,0.44), rgba(255,255,255,0.28));
+            border: 1px solid rgba(0,0,0,0.12);
+            z-index: 9999;
+            pointer-events: none;
+            display: none;
+            box-shadow: 0 6px 14px rgba(0,0,0,0.28);
+        }`;
+        document.head.appendChild(style);
+
+        const base = document.createElement('div');
+        base.className = 'joystick-base';
+        // inner ring for clarity
+        const inner = document.createElement('div');
+        inner.className = 'joystick-inner';
+        base.appendChild(inner);
+        document.body.appendChild(base);
+
+        const thumb = document.createElement('div');
+        thumb.className = 'joystick-thumb';
+        document.body.appendChild(thumb);
+
+        joystick.baseEl = base;
+        joystick.thumbEl = thumb;
+
+        // Position base initially
+        positionJoystickBase();
+    })();
+} else {
+    // Ensure joystick elements are null on desktop so callers can guard
+    joystick.baseEl = null;
+    joystick.thumbEl = null;
+}
 
 function positionJoystickBase() {
     // Compute base position/sizes relative to the canvas bounding rect so portrait/landscape both feel right
@@ -397,76 +456,79 @@ function deactivateJoystick() {
     joystick.thumbEl.style.top = `${joystick.baseY}px`;
 }
 
-// Touch handlers on canvas
-canvas.addEventListener('touchstart', function (e) {
-    // Prevent page scrolling while interacting
-    e.preventDefault();
+if (IS_MOBILE && joystick && joystick.baseEl) {
+    // Touch handlers on canvas (mobile only)
+    canvas.addEventListener('touchstart', function (e) {
+        // Prevent page scrolling while interacting
+        e.preventDefault();
 
-    for (let i = 0; i < e.changedTouches.length; i++) {
-        const t = e.changedTouches[i];
-        touchStarts[t.identifier] = { x: t.clientX, y: t.clientY, t: Date.now(), moved: false };
+        for (let i = 0; i < e.changedTouches.length; i++) {
+            const t = e.changedTouches[i];
+            touchStarts[t.identifier] = { x: t.clientX, y: t.clientY, t: Date.now(), moved: false };
 
-        // If touch started inside base circle -> joystick control
-        const dx = t.clientX - joystick.baseX;
-        const dy = t.clientY - joystick.baseY;
-        if (Math.sqrt(dx*dx + dy*dy) <= joystick.radius) {
-            // Start joystick control
-            activateJoystick(t);
-            // consume this touch for joystick only
-            continue;
+            // If touch started inside base circle -> joystick control
+            const dx = t.clientX - joystick.baseX;
+            const dy = t.clientY - joystick.baseY;
+            if (Math.sqrt(dx*dx + dy*dy) <= joystick.radius) {
+                // Start joystick control
+                activateJoystick(t);
+                // consume this touch for joystick only
+                continue;
+            }
+            // Otherwise, treat this touch as potential tap-to-jump (see touchend)
         }
-        // Otherwise, treat this touch as potential tap-to-jump (see touchend)
-    }
-}, { passive: false });
+    }, { passive: false });
 
-canvas.addEventListener('touchmove', function (e) {
-    e.preventDefault();
-    for (let i = 0; i < e.changedTouches.length; i++) {
-        const t = e.changedTouches[i];
-        const ts = touchStarts[t.identifier];
-        if (ts) ts.moved = true;
-        if (joystick.active && joystick.id === t.identifier) {
-            moveJoystickTo(t.clientX, t.clientY);
-        }
-    }
-}, { passive: false });
-
-canvas.addEventListener('touchend', function (e) {
-    e.preventDefault();
-    for (let i = 0; i < e.changedTouches.length; i++) {
-        const t = e.changedTouches[i];
-        const ts = touchStarts[t.identifier];
-
-        // If this was the joystick touch, deactivate
-        if (joystick.active && joystick.id === t.identifier) {
-            deactivateJoystick();
-        } else if (ts) {
-            // Tap detection for jump: short and little movement
-            const dt = Date.now() - ts.t;
-            const dx = t.clientX - ts.x;
-            const dy = t.clientY - ts.y;
-            const dist = Math.sqrt(dx*dx + dy*dy);
-            if (dt < 300 && dist < 30) {
-                // perform jump
-                if (!player.jumping) {
-                    player.dy = -15;
-                    player.jumping = true;
-                }
+    canvas.addEventListener('touchmove', function (e) {
+        e.preventDefault();
+        for (let i = 0; i < e.changedTouches.length; i++) {
+            const t = e.changedTouches[i];
+            const ts = touchStarts[t.identifier];
+            if (ts) ts.moved = true;
+            if (joystick.active && joystick.id === t.identifier) {
+                moveJoystickTo(t.clientX, t.clientY);
             }
         }
+    }, { passive: false });
 
-        delete touchStarts[t.identifier];
-    }
-}, { passive: false });
+    canvas.addEventListener('touchend', function (e) {
+        e.preventDefault();
+        for (let i = 0; i < e.changedTouches.length; i++) {
+            const t = e.changedTouches[i];
+            const ts = touchStarts[t.identifier];
 
-canvas.addEventListener('touchcancel', function (e) {
-    e.preventDefault();
-    // Reset joystick and cleanup
-    deactivateJoystick();
-    for (let i = 0; i < e.changedTouches.length; i++) {
-        delete touchStarts[e.changedTouches[i].identifier];
-    }
-}, { passive: false });
+            // If this was the joystick touch, deactivate
+            if (joystick.active && joystick.id === t.identifier) {
+                deactivateJoystick();
+            } else if (ts) {
+                // Tap detection for jump: short and little movement
+                const dt = Date.now() - ts.t;
+                const dx = t.clientX - ts.x;
+                const dy = t.clientY - ts.y;
+                const dist = Math.sqrt(dx*dx + dy*dy);
+                if (dt < 300 && dist < 30) {
+                    // perform jump
+                    if (!player.jumping) {
+                        player.dy = -15;
+                        player.jumping = true;
+                    }
+                }
+            }
+
+            delete touchStarts[t.identifier];
+        }
+    }, { passive: false });
+
+    canvas.addEventListener('touchcancel', function (e) {
+        e.preventDefault();
+        // Reset joystick and cleanup
+        deactivateJoystick();
+        for (let i = 0; i < e.changedTouches.length; i++) {
+            delete touchStarts[e.changedTouches[i].identifier];
+        }
+    }, { passive: false });
+
+}
 
 // Player collision box fully defined
 // Helper function to get the player's collision box coordinates (top-left corner)
@@ -698,13 +760,28 @@ function draw() {
 
 // Spawn coins at random positions
 function spawnCoin() {
-    let x = Math.random() * (canvas.width - 32);
-    // Spawn coins between 50 pixels and 150 pixels above the ground line
-    const MIN_Y_OFFSET = 150; 
-    const MAX_Y_OFFSET = 50; 
-    let randomOffset = Math.random() * (MIN_Y_OFFSET - MAX_Y_OFFSET) + MAX_Y_OFFSET;
-    let y = gameState.GROUND_Y - randomOffset;
-    gameState.coins.push({ x, y, w: 32, h: 32 });
+    
+    // Ensure canvas has valid size
+    const cw = Math.max(1, canvas.width);
+    const ch = Math.max(1, canvas.height);
+
+    // Choose a normalized X (0..1) then compute pixel X
+    const normX = Math.random();
+    const x = Math.round(normX * (cw - 32));
+
+    // Spawn a coin with a normalized offset above the ground (fraction of canvas height)
+    const MIN_Y_OFFSET = 150;
+    const MAX_Y_OFFSET = 50;
+    const randomOffset = Math.random() * (MIN_Y_OFFSET - MAX_Y_OFFSET) + MAX_Y_OFFSET; // px
+    const offsetAboveGroundNorm = Math.max(0, Math.min(1, randomOffset / ch));
+    const y = gameState.GROUND_Y - 32 - Math.round(offsetAboveGroundNorm * ch);
+
+    gameState.coins.push({
+        x, y, w: 32, h: 32,
+        // store world-normalized values so coins remain consistent across resizes
+        normX: normX,
+        offsetAboveGroundNorm: offsetAboveGroundNorm
+    });
 }
 setInterval(spawnCoin, 5000);
 
