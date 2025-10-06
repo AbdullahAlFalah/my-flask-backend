@@ -275,10 +275,13 @@ function positionJoystickBase() {
     const cw = rect.width;
     const ch = rect.height;
 
-    // Choose sizes relative to canvas width but clamp to sensible min/max
-    const baseRadius = Math.round(Math.max(44, Math.min(110, cw * 0.14)));
-    const thumbRadius = Math.round(Math.max(18, Math.min(44, cw * 0.055)));
-    const maxRadius = Math.round(baseRadius * 0.7);
+    // Use the smaller canvas dimensions so joystick stays reasonable in landscape
+    const minDim = Math.min(cw, ch);
+
+    // Compute sizes based on minDim and clamp to sensible ranges
+    const baseRadius = Math.round(Math.max(36, Math.min(80, minDim * 0.12)));
+    const thumbRadius = Math.round(Math.max(14, Math.min(36, minDim * 0.06)));
+    const maxRadius = Math.round(baseRadius * 0.65);
 
     joystick.radius = baseRadius;
     joystick.thumbRadius = thumbRadius;
@@ -288,7 +291,7 @@ function positionJoystickBase() {
     const groundScreenY = rect.top + gameState.GROUND_Y;
 
     // Desired placement: right side, approx mid-height but not overlapping ground
-    const insetX = Math.max(60, cw * 0.12);
+    const insetX = Math.round(Math.max(80, cw * 0.18));
     const baseX = Math.round(rect.left + cw - insetX); // baseX: inset from the right edge of the canvas
 
     // baseY: around 40..50% down from top (mid-ish), but clamp so it stays above ground and not too close to top
