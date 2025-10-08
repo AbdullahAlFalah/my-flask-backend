@@ -115,14 +115,14 @@ def get_movies_data():
     db = client['sample_mflix']
     collection = db['movies']
     
-    # Fetch a limited number of movie documents
-    movies = list(collection.find().limit(10))
+    # Fetch a limited number of movie documents without the fullplot field
+    movies = list(collection.find({}, projection={'fullplot': False}).limit(10))
     
     # Convert ObjectId to string for JSON serialization
     for movie in movies:
         movie['_id'] = str(movie['_id'])
     
-    return {'movies': movies}
+    return jsonify({'movies': movies}), 200 # Success
 
 
 # ==========================================================
@@ -147,7 +147,7 @@ def get_comments_data():
         if isinstance(comment['date'], datetime):
             comment['date'] = comment['date'].isoformat()
     
-    return jsonify({"comments": comments})
+    return jsonify({"comments": comments}), 200 # Success
 
 # ==========================================================
 # POST A COMMENT
@@ -165,7 +165,7 @@ def add_comment():
     # Validate required fields
     required_fields = ['name', 'email', 'text', 'movie_id']
     if not all(field in data and data[field] for field in required_fields):
-        return jsonify({"error": "Missing one or more required fields"}), 400
+        return jsonify({"error": "Missing one or more required fields"}), 400 # 400 Bad Request
 
     # Create the new comment document
     new_comment = {
@@ -181,7 +181,7 @@ def add_comment():
     return jsonify({
         "message": "Comment added successfully!",
         "inserted_id": str(result.inserted_id)
-    }), 201
+    }), 201 # 201 Created
 
 if __name__ == '__main__':
     app.run(debug=True)
