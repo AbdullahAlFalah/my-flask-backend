@@ -69,7 +69,8 @@ def secure_route(f):
             
         # Check Referer header (used by regular browser navigations)
         # Note: We use .startswith() because the Referer includes the full path.
-        if referer and referer.startswith(os.getenv("VERCEL_FRONTEND_URL")):
+        frontend_url = os.getenv("VERCEL_FRONTEND_URL") or "https://abdullahal-falahportfolio.vercel.app"
+        if referer and referer.startswith(frontend_url):
             is_trusted = True
 
         # 3. If the source is NOT trusted, block the request
@@ -116,7 +117,20 @@ def get_movies_data():
     collection = db['movies']
     
     # Fetch a limited number of movie documents without the fullplot field
-    movies = list(collection.find({}, projection={'fullplot': False}).limit(10))
+    movies = list(collection.aggregate([
+        {"$project": {"fullplot": 0}},
+        {"$sort": {"year": 1}},
+        {
+            "$group": {
+                "_id": "$title",
+                "doc": {"$first": "$$ROOT"}
+            }
+        },
+        {"$replaceRoot": {"newRoot": "$doc"}},
+        {"$sort": {"year": 1}},
+        {"$limit": 10}
+    ], allowDiskUse=True))
+
     
     # Convert ObjectId to string for JSON serialization
     for movie in movies:
