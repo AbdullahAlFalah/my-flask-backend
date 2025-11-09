@@ -128,7 +128,7 @@ def get_movies_data():
         },
         {"$replaceRoot": {"newRoot": "$doc"}},
         {"$sort": {"year": 1}},
-        {"$limit": 10}
+        {"$limit": 15}
     ], allowDiskUse=True))
 
     
